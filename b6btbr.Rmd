@@ -1,0 +1,216 @@
+---
+title: "Untitled"
+author: "Lareina Xiaoyu Liu"
+date: "2/10/2020"
+output: html_document
+---
+***Notes:***
+***[x]Import Data***
+***[x]Genotype Probabilities***
+***[x]Special covariates for the X chromosome***
+***[x]Genome scan***
+
+Import Data
+```{r}
+library(qtl2)
+library(devtools)
+file <- paste0("https://raw.githubusercontent.com/rqtl/",
+               "qtl2data/master/B6BTBR/b6btbr.zip")
+b6btbr <- read_cross2(file)
+summary(b6btbr)
+```
+
+```{r}
+pdata = as.data.frame.table(b6btbr$pheno)
+pdata
+```
+
+Genotype Probabilities
+```{r}
+# insert pseudomarkers into the genetic map, calc positions between markers
+map <- insert_pseudomarkers(b6btbr$gmap, step=1)
+
+# conditional genotype probabilities
+prob <- calc_genoprob(b6btbr, map, error_prob=0.002, cores = 4) # individuals × genotypes × positions
+```
+
+Special covariates for the X chromosome
+```{r}
+Xcovar <- get_x_covar(b6btbr) # sex
+```
+
+Performing a genome scan
+* likelihhod ratio (ch4) p76
+Logarithm of odds: Log10 likelihood ratio comparing the hypothesis that there is a QTL at the marker to the pypothesis that there's no QTL anywhere in the genome. 
+- t-test: linkage of a marker to a QTL
+- ANOVA: in an intercross
+# high LOD, strong signal, low p
+# The LOD score is calculated using the sum of squared residuals for the null and alternative hypotheses. The LOD score is the difference between the log10 likelihood of the null hypothesis and the log10 likelihood of the alternative hypothesis. It is related to the regression model above by identifying the line of best fit to the data. A higher LOD score indicates greater likelihood of the alternative hypothesis. A LOD score closer to zero favors the null hypothesis.
+
+```{r}
+out <- scan1(prob, b6btbr$pheno, Xcovar = Xcovar, cores = 4) # matrix of LOD (likelihood to be inharited) scores, positions × phenotypes
+
+# plot_scan1()
+par(mar=c(5.1, 4.1, 1.1, 1.1))
+ymx <- maxlod(out) # overall maximum LOD score
+plot(out, map, lodcolumn=1, col="blue", ylim=c(0, ymx*1.02))
+plot(out, map, lodcolumn=2, col="red", add=TRUE)
+plot(out, map, lodcolumn=3, col="green", add=TRUE)
+legend("topright", lwd=2, col=c("blue", "red", "green"), colnames(out))
+```
+
+One thing to look at is the insulin peak on chr 19. If we get the genotype there and use it as a covarite for insulin, does that peak go away? What about the other peaks on 2, 7, 12?
+And don't forget about looking at sex as well.
+
+```{r}
+(peaks <- find_peaks(out, map, threshold=4, drop=1.5))
+```
+
+```{r}
+# Want to find marker ("rs...") closest to the peak for agouti
+# peak is not at a marker, so need to find the nearest actual marker.
+#   c2.loc76 rs13476832   c2.loc77   c2.loc78  rs4223605  rs3022932   c2.loc79   c2.loc80 
+#  76.002200  76.096993  77.002200  78.002200  78.856950  78.946323  79.002200  80.002200 
+# want rs4223605
+marker_agouti <- find_marker(map, 2, 78.0022)
+t1 = table(b6btbr$pheno[,"agouti_tan"], b6btbr$geno[[2]][,"rs4223605"]) # replace
+t1
+```
+
+```{r}
+chisq.test(t1, correct = FALSE) # not independent
+```
+
+
+
+Next meeting: 
+- zoom in chr = 2, 17
+- why curve is smooth
+- what is lOD about, statistical test? why similar values?
+- permutation test, fisher's
+
+```{r}
+# zoom in to chr 2
+plot(out, map, lodcolumn=2, col = "red", chr = 2)
+# genotype changes from different chr positiosn
+# closer to each other, more likely to be inherited, higher LOD
+```
+* do a t-test at the peak
+* recombination rate - genetic distance P13 
+```{r}
+# zoom in to chr 17
+plot(out, map, lodcolumn=3, col = "green", chr = 17)
+```
+
+```{r}
+# zoom in to chr 19
+plot(out, map, lodcolumn=1, col = "blue", chr = 19)
+```
+
+* how is the graph obtained?
+- by taking F test with genotype as predictor
+- see tables, diagnals?
+- chi-squared test to see independence of the tables
+- find the peak, and look at the link between phynotypes
+
+Permutation Test
+```{r}
+if(file.exists("operm_10_insulin.csv")) {
+} else {
+operm_10_insulin <- scan1perm(prob, b6btbr$pheno, Xcovar=Xcovar, n_perm=10, cores=4) # save as csv
+}
+summary(operm_10_insulin)
+```
+- histogram: density of probability
+- plot each var, with bar
+- as increase sample size, get better proportion est. 
+
+
+Next meeting: 
+- think about permutation test, visualize (do I trust 5%?), calc sd
+- visualize bionomial dist
+- get accuracy +-, how much will fall in 10% with a new sample
+- take permutation test multiple times to see the variance
+- multiple experiments, taking avg of thresholds, CLT, add thresh tgt or avg?
+- figure out peaks, point estimate, variance, CI
+- genotypes at the peak markers, compare with phenotypes
+
+```{r}
+summary(operm, alpha=c(0.05, 0.01)) # tunning parameter
+```
+
+```{r}
+hist(operm, breaks = 10, probability = T)
+#curve(dnorm(x, mean=mean(operm), sd=sqrt(var(operm))), col="red", lwd=2, add=TRUE)
+```
+
+
+Estimated QTL effects
+```{r}
+(coef17 <- scan1coef(prob[,"17"], b6btbr$pheno[,"tufted"])) # chromosome 17
+# coef adds up to 0
+```
+
+```{r}
+mean(b6btbr$pheno[,"tufted"], na.rm = TRUE)
+```
+
+
+```{r}
+col <- c("blue", "red", "green")
+plot(coef17, map["17"], columns=1:3, col=col)
+last_coef <- unclass(coef17)[nrow(coef17),] # pull out last coefficients
+for(i in seq(along=last_coef))
+    axis(side=4, at=last_coef[i], names(last_coef)[i], tick=FALSE, col.axis=col[i])
+# mutually exclusive - no overlaps
+```
+
+```{r}
+g <- maxmarg(prob, map, chr=17, pos=13.41, return_char=TRUE) #infer genotypes at the chr 2 for the phenotype
+plot_pxg(g, b6btbr$pheno[,"tufted"])
+# BB/BR more likely to be not tufted
+# chi-sq
+```
+
+NExt Meeting:
+* make a contingency table, calc porportion of aguti=1 at BR or RR
+* chi-sq for contingency
+* approximation of binary response
+
+```{r}
+coef2 <- scan1coef(prob[,"2"], b6btbr$pheno[,"agouti_tan"])
+```
+
+```{r}
+col <- c("blue", "red", "green")
+plot(coef2, map["2"], columns=1:3, col=col)
+last_coef <- unclass(coef2)[nrow(coef2),] # pull out last coefficients
+for(i in seq(along=last_coef))
+    axis(side=4, at=last_coef[i], names(last_coef)[i], tick=FALSE, col.axis=col[i])
+# mutually exclusive - no overlaps
+```
+
+```{r}
+g <- maxmarg(prob, map, chr=2, pos=78.0022, return_char=TRUE)
+par(mar=c(4.1, 4.1, 0.6, 0.6))
+plot_pxg(g, b6btbr$pheno[,"agouti_tan"])
+# RR is more likely to be agouti
+```
+
+```{r}
+coef19 <- scan1coef(prob[,"19"], b6btbr$pheno[,"log10_insulin_10wk"])
+```
+
+```{r}
+col <- c("blue", "red", "green")
+plot(coef19, map["19"], columns=1:3, col=col)
+last_coef <- unclass(coef19)[nrow(coef19),]
+for(i in seq(along=last_coef))
+    axis(side=4, at=last_coef[i], names(last_coef)[i], tick=FALSE, col.axis=col[i])
+```
+
+```{r}
+g <- maxmarg(prob, map, chr=19, pos=49.22846, return_char=TRUE)
+plot_pxg(g, b6btbr$pheno[,"log10_insulin_10wk"]) # only numerical
+```
+
